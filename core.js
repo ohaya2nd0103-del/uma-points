@@ -9,7 +9,7 @@ export const TYPES = Object.freeze({
   win5: { name: 'WIN5', size: 5, ordered: true }
 });
 export const CATEGORIES = { central: '中央', local: '地方', overseas: '海外' };
-export const SURFACES = { turf: '芝', dirt: 'ダート', jump: '障害', other: 'その他', unknown: '不明' };
+export const SURFACES = { turf: '芝', dirt: 'ダート', banei: 'ばんえい', jump: '障害', other: 'その他', unknown: '不明' };
 export const CLASSES = { maidenDebut: '新馬', maiden: '未勝利', allowance: '条件戦', open: 'オープン', graded: '重賞', unknown: '不明' };
 export const JUDGMENTS = { pending: '未判定', win: '的中', loss: '不的中', refund: '返還' };
 export const METHODS = { normal: '通常', box: 'ボックス', wheel: '流し', formation: 'フォーメーション', multi: 'マルチ' };
@@ -24,6 +24,8 @@ export const allLines = s => s.orders.flatMap(o => o.lines);
 export const scopeLines = (s, key) => allLines(s).filter(l => scopeKey(l.raceIds) === key);
 export const scopeTickets = (s, key) => s.tickets.filter(t => t.scope === key);
 export const isLocked = (s, id) => allLines(s).some(l => l.raceIds.includes(id));
+const settledRaceIds = s => new Set(allLines(s).filter(l=>s.settlements[scopeKey(l.raceIds)]).flatMap(l=>l.raceIds));
+export const isSettled = (s, id) => settledRaceIds(s).has(id);
 export const selectionText = line => line.numbers.map(n => String(n).padStart(2, '0')).join(TYPES[line.kind].ordered ? ' → ' : ' − ');
 export const allowedMethods = kind => kind === 'win5' ? ['formation'] : TYPES[kind]?.size === 1 ? ['normal'] : TYPES[kind]?.ordered ? Object.keys(METHODS) : ['normal', 'box', 'wheel', 'formation'];
 export function sum(values) {
@@ -142,14 +144,9 @@ export function validateDraft(s, d) {
   });
   if (!['win5','bracket'].includes(d.kind) && new Set(d.numbers).size !== d.numbers.length) fail('同じ馬番を重複して選べません。');
 }
-export function deadline(s, ids) {
-  const times = ids.map(id => { const r = s.races.find(r => r.id === id); if (!r?.startAt) fail('購入前に発走予定時刻を登録してください。'); return new Date(r.startAt).getTime(); });
-  if (!times.length || times.some(t => !Number.isFinite(t))) fail('発走予定時刻を確認してください。');
-  return Math.min(...times);
-}
 const draftKey = d => JSON.stringify([d.raceIds,d.kind,d.numbers]);
 export function preview(s, now) {
-  const lines = s.drafts.filter(d => { try { return new Date(now).getTime() < deadline(s, d.raceIds); } catch { return false; } });
+  const settled=settledRaceIds(s),lines=s.drafts.filter(d=>!d.raceIds.some(id=>settled.has(id)));
   return { lines: clone(lines), total: sum(lines.map(d => d.stake)), balanceBefore: balance(s), excluded: s.drafts.length-lines.length };
 }
 export function settlementDraft(s, key, now) {
@@ -173,10 +170,10 @@ export function dispatch(s, action, p = {}, now = Date.now(), catalog) {
     s.races = s.races.filter(r => r.id !== p.id); s.drafts = s.drafts.filter(d => !d.raceIds.includes(p.id)); return;
   }
   if (action === 'draftAdd') {
-    const keys = new Set(s.drafts.map(draftKey)); let count = 0;
+    const keys = new Set(s.drafts.map(draftKey)),settled=settledRaceIds(s);let count = 0;
     p.lines.forEach(original => {
       const d = clone(original); if (!TYPES[d.kind]?.ordered) d.numbers.sort((a,b) => a-b);
-      validateDraft(s,d); const key = draftKey(d);
+      validateDraft(s,d);if(d.raceIds.some(id=>settled.has(id)))fail('精算済みのレースには追加購入できません。別の開催としてレースを作成してください。');const key = draftKey(d);
       if (!keys.has(key)) { if (s.drafts.length >= MAX_LINES) fail('購入予定は20,000点までです。'); keys.add(key); s.drafts.push(d); count++; }
     }); return count;
   }
@@ -187,11 +184,11 @@ export function dispatch(s, action, p = {}, now = Date.now(), catalog) {
   }
   if (action === 'purchase') {
     const previous = s.orders.find(o => o.id === p.token); if (previous) return clone(previous);
-    grantMonths(s,now); const expected = p.preview;
+    grantMonths(s,now);const expected=p.preview,settled=settledRaceIds(s);
     if (!expected?.lines.length || new Set(expected.lines.map(d => d.id)).size !== expected.lines.length) fail('購入可能な買い目がありません。');
     expected.lines.forEach(d => {
       if (JSON.stringify(s.drafts.find(x => x.id === d.id)) !== JSON.stringify(d)) fail('購入予定が更新されました。確認画面を開き直してください。');
-      validateDraft(s,d); if (new Date(now).getTime() >= deadline(s,d.raceIds)) fail('発走予定時刻を過ぎたため締切です。');
+      validateDraft(s,d);if(d.raceIds.some(id=>settled.has(id)))fail('対象レースが精算済みです。購入予定を確認してください。');
     });
     const total = sum(expected.lines.map(d => d.stake));
     if (balance(s) < total || balance(s) < 100) fail('ポイント不足のため購入できません。');
@@ -213,7 +210,6 @@ export function dispatch(s, action, p = {}, now = Date.now(), catalog) {
     const previous = s.revisions.find(r => r.id === p.token);
     if (previous) { if (previous.scope !== p.scope) fail('処理IDが一致しません。'); return { total: previous.after.total, delta: previous.delta, first: false, winningIds: [] }; }
     const lines = scopeLines(s,p.scope); if (!lines.length) fail('購入した買い目がありません。');
-    if (!lines.flatMap(l => l.raceIds).every(id => { const r = s.races.find(r => r.id === id); return r?.startAt && new Date(r.startAt).getTime() <= new Date(now).getTime(); })) fail('対象すべての発走予定時刻を過ぎてから精算できます。');
     const before = s.settlements[p.scope] || null, draft = settlementDraft(s,p.scope,now);
     if ((before?.version || 0) !== p.baseVersion || draft.baseVersion !== p.baseVersion) fail('精算結果が更新されました。開き直してください。');
     const byLine = Object.fromEntries(lines.map(l => [l.id,payout(l.stake,draft.inputs[l.id])]));
@@ -259,10 +255,12 @@ export function inPeriod(value, period, anchor) {
 export function performances(s, period = 'all', anchor = Date.now()) {
   return Object.entries(s.settlements).flatMap(([key,result]) => {
     const lines = scopeLines(s,key), race = s.races.find(r => r.id === lines[0]?.raceIds[0]);
-    if (!race?.startAt || !inPeriod(race.startAt,period,anchor)) return [];
+    if (!race) return [];
+    const at=race.startAt||`${race.date}T12:00:00+09:00`,day=jpDay(at);
+    if (!inPeriod(at,period,anchor)) return [];
     const cost = sum(lines.map(l => l.stake));
-    return [{ key, race, lines, cost, payout: result.total, profit: result.total-cost, win: Object.values(result.inputs).some(i => i.judgment === 'win'), win5: lines[0].kind === 'win5' }];
-  }).sort((a,b) => a.race.startAt.localeCompare(b.race.startAt));
+    return [{ key, race, day, lines, cost, payout: result.total, profit: result.total-cost, win: Object.values(result.inputs).some(i => i.judgment === 'win'), win5: lines[0].kind === 'win5' }];
+  }).sort((a,b) => a.day.localeCompare(b.day));
 }
 export function metrics(items) {
   const cost = sum(items.map(i => i.cost)), returned = sum(items.map(i => i.payout)), wins = items.filter(i => i.win).length;
@@ -283,7 +281,7 @@ export function classify(s, items, dimension) {
     const r = item.race, d = r.distance;
     const key = { category: CATEGORIES[r.category], venue:r.venue, surface:SURFACES[r.surface], grade:r.grade || '不明', class:CLASSES[r.class] || '不明',
       distance: d == null ? '不明' : d < 1400 ? '1,400m未満' : d < 1800 ? '1,400〜1,799m' : d < 2200 ? '1,800〜2,199m' : d < 2800 ? '2,200〜2,799m' : '2,800m以上',
-      weekday: ['日曜日','月曜日','火曜日','水曜日','木曜日','金曜日','土曜日'][new Date(jpDay(r.startAt)+'T00:00:00Z').getUTCDay()] }[dimension] || '不明';
+      weekday: ['日曜日','月曜日','火曜日','水曜日','木曜日','金曜日','土曜日'][new Date(item.day+'T00:00:00Z').getUTCDay()] }[dimension] || '不明';
     put(key,item);
   });
   return [...groups].map(([label,items]) => ({ label,...metrics(items) }));

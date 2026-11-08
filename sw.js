@@ -1,5 +1,5 @@
 const PREFIX = 'uma-points-' + new URL(self.registration.scope).pathname + '-';
-const CACHE = PREFIX + 'v3-20261108-annual-calendar-2';
+const CACHE = PREFIX + 'v4-20261108-no-time-local-all-1';
 const ASSETS = ['./','./index.html','./styles.css','./app.js','./core.js','./storage.js','./catalog.js','./tickets.js','./game-calendar.js','./game-programs.js','./local-graded-programs.js','./manifest.webmanifest','./icon-192.png','./icon-512.png','./apple-touch-icon.png'];
 self.addEventListener('install',event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS))));
 self.addEventListener('activate',event => event.waitUntil((async () => {
