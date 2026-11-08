@@ -5,7 +5,7 @@ export function paperHTML(ticket, page = 0) {
   const h = escapeHTML, race = ticket.races[0], rows = ticket.lines.slice(page*30,page*30+30);
   return `<div class="paper" aria-label="${h(TYPES[ticket.kind].name)}の紙馬券。架空ポイント・換金不可">
     <div class="paper-label">紙馬券シミュレーション</div>
-    ${ticket.kind === 'win5' ? `<div class="paper-race">WIN5</div>${ticket.races.map((r,i) => `<div class="paper-leg">${i+1}　${h(r.date)}　${h(r.venue)} ${r.number}R</div>`).join('')}` : `<div class="paper-day">${h(race.date)}</div><div class="paper-race">${h(race.venue)} ${race.number}R</div><div class="paper-name">${h(race.name)}</div>`}
+    ${ticket.kind === 'win5' ? `<div class="paper-race">WIN5</div>${ticket.races.map((r,i) => `<div class="paper-leg">${i+1}　${h(r.date)}　${h(r.venue)} ${r.number}R</div>`).join('')}` : `<div class="paper-day">${h(race.date)}${race.gameOrigin?` · 参考 ${race.gameOrigin.month}月${race.gameOrigin.week}週`:''}</div><div class="paper-race">${h(race.venue)} ${race.number}R</div><div class="paper-name">${h(race.name)}</div>`}
     <div class="paper-kind">${h(TYPES[ticket.kind].name)}</div>
     ${rows.map(l => `<div class="paper-line"><span>${h(selectionText(l))}</span><small>${l.stake.toLocaleString('ja-JP')} pt</small></div>`).join('')}
     <div class="paper-foot">合計 ${ticket.lines.length}点　${sum(ticket.lines.map(l=>l.stake)).toLocaleString('ja-JP')} pt<br><strong>架空ポイント・換金不可</strong>　${page+1}/${pageCount(ticket)}</div>
@@ -24,7 +24,7 @@ export function ticketCanvas(ticket, page = 0, scale = 2) {
     text('WIN5',22,46,25,true);
     ticket.races.forEach((r,i)=>text(`${i+1}　${r.date}　${r.venue} ${r.number}R`,22,82+i*22,12)); rule(198);
   } else {
-    const r = ticket.races[0]; text(r.date,22,46,13); text(`${r.venue} ${r.number}R`,22,73,26,true); text(r.name,22,112,12); rule(134);
+    const r = ticket.races[0]; text(r.date+(r.gameOrigin?` · 参考 ${r.gameOrigin.month}月${r.gameOrigin.week}週`:''),22,46,13); text(`${r.venue} ${r.number}R`,22,73,26,true); text(r.name,22,112,12); rule(134);
   }
   text(TYPES[ticket.kind].name,22,header-6,14,true);
   lines.forEach((l,i)=>{const y=header+23+i*24;text(selectionText(l),22,y,ticket.kind==='win5'?12:15,false,212);text(`${l.stake.toLocaleString('ja-JP')} pt`,244,y,12,false,94);});
